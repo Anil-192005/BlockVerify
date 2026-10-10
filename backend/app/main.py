@@ -17,8 +17,19 @@ from app.qr_service import qr_service
 from app.pdf_generator import generate_certificate_pdf
 from app.ipfs import ipfs_service
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+# Create database tables helper (invoked on startup with retry)
+def init_db_tables():
+    import time
+    for attempt in range(10):
+        try:
+            Base.metadata.create_all(bind=engine)
+            return True
+        except Exception as e:
+            if attempt == 9:
+                print(f"Warning: Database tables could not be initialized: {e}")
+                return False
+            time.sleep(2)
+    return False
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
@@ -108,6 +119,7 @@ def get_blockchain_tx(tx_hash: str):
 # Seed default accounts and demonstration certificates on startup
 @app.on_event("startup")
 def seed_demo_data():
+    init_db_tables()
     db = SessionLocal()
     try:
         if db.query(User).count() == 0:

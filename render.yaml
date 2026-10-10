@@ -17,13 +17,9 @@ services:
       - key: ETHEREUM_RPC_URL
         value: https://rpc.sepolia.org
       - key: CONTRACT_ADDRESS
-        sync: false
-      - key: DEPLOYER_PRIVATE_KEY
-        sync: false
-      - key: PINATA_API_KEY
-        sync: false
-      - key: PINATA_SECRET_API_KEY
-        sync: false
+        value: "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+      - key: USE_SIMULATED_CHAIN
+        value: "true"
       - key: FRONTEND_URL
         value: https://blockverify.vercel.app
 
