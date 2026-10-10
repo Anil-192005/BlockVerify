@@ -7,19 +7,33 @@ import {
   BlockchainTransaction
 } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+const isTunnel = typeof window !== 'undefined' && window.location.hostname.includes('loca.lt');
+const API_BASE = import.meta.env.VITE_API_BASE_URL ||
+  (isTunnel ? 'https://good-emus-laugh.loca.lt/api' : 'http://localhost:8000/api');
+
+function getBaseHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (isTunnel) {
+    headers['bypass-tunnel-reminder'] = '1';
+  }
+  return headers;
+}
 
 function getAuthHeader(): Record<string, string> {
   const token = localStorage.getItem('blockverify_token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const headers = getBaseHeaders();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
 }
 
 export const api = {
   // Auth
-  async login(email: string, password: string):Promise<{ access_token: string; user: User }> {
+  async login(email: string, password: string): Promise<{ access_token: string; user: User }> {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...getBaseHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
     if (!res.ok) {
@@ -32,7 +46,7 @@ export const api = {
   async register(data: { name: string; email: string; password: string; role: string; organization?: string }): Promise<{ access_token: string; user: User }> {
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...getBaseHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
     if (!res.ok) {
@@ -60,6 +74,7 @@ export const api = {
 
     const res = await fetch(`${API_BASE}/verify/file`, {
       method: 'POST',
+      headers: getBaseHeaders(),
       body: formData,
     });
     if (!res.ok) {
@@ -73,7 +88,9 @@ export const api = {
   },
 
   async verifyById(documentId: string): Promise<VerificationResult> {
-    const res = await fetch(`${API_BASE}/verify/id/${encodeURIComponent(documentId)}`);
+    const res = await fetch(`${API_BASE}/verify/id/${encodeURIComponent(documentId)}`, {
+      headers: getBaseHeaders(),
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       if (err.status) {
