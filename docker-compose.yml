@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: blockverify_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: blockverify_user
+      POSTGRES_PASSWORD: blockverify_password_2026
+      POSTGRES_DB: blockverify_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blockverify_user -d blockverify_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: blockverify_api
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://blockverify_user:blockverify_password_2026@postgres:5432/blockverify_db
+      - JWT_SECRET=super-secure-production-jwt-secret-key-2026
+      - ETHEREUM_RPC_URL=https://rpc.sepolia.org
+      - CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
+      - FRONTEND_URL=http://localhost:5173
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/uploads:/app/backend/uploads
+      - ./backend/generated_certs:/app/backend/generated_certs
+      - ./backend/generated_qrs:/app/backend/generated_qrs
+
+volumes:
+  pgdata:

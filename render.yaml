@@ -1,0 +1,36 @@
+services:
+  # FastAPI Backend Service
+  - type: web
+    name: blockverify-api
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: "pip install -r backend/requirements.txt"
+    startCommand: "python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: blockverify-postgres
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ETHEREUM_RPC_URL
+        value: https://rpc.sepolia.org
+      - key: CONTRACT_ADDRESS
+        sync: false
+      - key: DEPLOYER_PRIVATE_KEY
+        sync: false
+      - key: PINATA_API_KEY
+        sync: false
+      - key: PINATA_SECRET_API_KEY
+        sync: false
+      - key: FRONTEND_URL
+        value: https://blockverify.vercel.app
+
+databases:
+  # Managed PostgreSQL Database
+  - name: blockverify-postgres
+    region: oregon
+    plan: free
+    databaseName: blockverify_db
+    user: blockverify_user

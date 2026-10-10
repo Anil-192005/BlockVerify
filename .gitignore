@@ -1,0 +1,49 @@
+# Python & Virtualenv
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Node & Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.npm/
+
+# Environment Variables & Secrets (CRITICAL: Never commit secrets)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+backend/blockverify.db
+
+# Storage & Temporary Files
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/generated_certs/*
+!backend/generated_certs/.gitkeep
+
+# Hardhat
+artifacts/
+cache/
+typechain/
+typechain-types/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
