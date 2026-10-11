@@ -6,6 +6,7 @@ import {
   VerificationLog,
   BlockchainTransaction
 } from '../types';
+import { clientBlockchain } from './clientBlockchain';
 
 const isTunnel = typeof window !== 'undefined' && window.location.hostname.includes('loca.lt');
 
@@ -14,9 +15,6 @@ const getApiBase = (): string => {
     return import.meta.env.VITE_API_BASE_URL;
   }
   if (typeof window !== 'undefined') {
-    // When accessed from any device (localhost, LAN IP like 192.168.x.x, or tunnel),
-    // relative '/api' routes through Vite's dev proxy (or reverse proxy in production).
-    // This eliminates localhost connection issues and ensures other devices communicate seamlessly!
     return '/api';
   }
   return 'http://localhost:8000/api';
@@ -41,40 +39,60 @@ function getAuthHeader(): Record<string, string> {
   return headers;
 }
 
+async function safeFetchJson<T>(url: string, options?: RequestInit): Promise<T | null> {
+  try {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    if (res.ok && !contentType.includes('text/html')) {
+      return (await res.json()) as T;
+    }
+  } catch {
+    // network error, cors, or offline
+  }
+  return null;
+}
+
 export const api = {
   // Auth
   async login(email: string, password: string): Promise<{ access_token: string; user: User }> {
-    const res = await fetch(`${API_BASE}/auth/login`, {
+    const remote = await safeFetchJson<{ access_token: string; user: User }>(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { ...getBaseHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Failed to login');
+
+    if (remote && remote.access_token) {
+      return remote;
     }
-    return res.json();
+
+    // Client-side Autonomous Blockchain Auth (e.g. on Netlify or when backend is offline)
+    return clientBlockchain.login(email, password);
   },
 
   async register(data: { name: string; email: string; password: string; role: string; organization?: string }): Promise<{ access_token: string; user: User }> {
-    const res = await fetch(`${API_BASE}/auth/register`, {
+    const remote = await safeFetchJson<{ access_token: string; user: User }>(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: { ...getBaseHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Failed to register');
+
+    if (remote && remote.access_token) {
+      return remote;
     }
-    return res.json();
+
+    return clientBlockchain.register(data);
   },
 
   async getProfile(): Promise<User> {
-    const res = await fetch(`${API_BASE}/auth/me`, {
+    const remote = await safeFetchJson<User>(`${API_BASE}/auth/me`, {
       headers: getAuthHeader(),
     });
-    if (!res.ok) throw new Error('Unauthorized');
-    return res.json();
+
+    if (remote && remote.id) {
+      return remote;
+    }
+
+    return clientBlockchain.getProfile();
   },
 
   // Verification
@@ -85,87 +103,105 @@ export const api = {
       formData.append('claimed_doc_id', claimedDocId);
     }
 
-    const res = await fetch(`${API_BASE}/verify/file`, {
-      method: 'POST',
-      headers: getBaseHeaders(),
-      body: formData,
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      if (err.status) {
-        return err;
+    try {
+      const res = await fetch(`${API_BASE}/verify/file`, {
+        method: 'POST',
+        headers: getBaseHeaders(),
+        body: formData,
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('text/html')) {
+        const json = await res.json();
+        if (json && json.status) {
+          return json;
+        }
       }
-      throw new Error(err.detail || 'Verification request failed');
+    } catch {
+      // fallback to client verification engine
     }
-    return res.json();
+
+    // Client-side Autonomous Verification (computes SHA-256 and verifies on-chain record / embedded proof)
+    return await clientBlockchain.verifyFile(file, claimedDocId);
   },
 
   async verifyById(documentId: string): Promise<VerificationResult> {
-    const res = await fetch(`${API_BASE}/verify/id/${encodeURIComponent(documentId)}`, {
+    const remote = await safeFetchJson<VerificationResult>(`${API_BASE}/verify/id/${encodeURIComponent(documentId)}`, {
       headers: getBaseHeaders(),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      if (err.status) {
-        return err;
-      }
-      throw new Error(err.detail || 'Document lookup failed');
+
+    if (remote && remote.status) {
+      return remote;
     }
-    return res.json();
+
+    return clientBlockchain.verifyById(documentId);
   },
 
   getDocumentDownloadUrl(documentId: string): string {
-    return `${API_BASE}/documents/${encodeURIComponent(documentId)}/download`;
+    return clientBlockchain.getDocumentDownloadUrl(documentId);
   },
 
   getQrCodeUrl(documentId: string): string {
-    const base = API_BASE.endsWith('/api') ? API_BASE.slice(0, -4) : API_BASE;
-    return `${base}/qrs/qr_${documentId.replace('/', '_')}.png`;
+    return clientBlockchain.getQrCodeUrl(documentId);
   },
 
   async getVerificationHistory(): Promise<VerificationLog[]> {
-    const res = await fetch(`${API_BASE}/verify/history`);
-    if (!res.ok) throw new Error('Failed to fetch verification logs');
-    return res.json();
+    const remote = await safeFetchJson<VerificationLog[]>(`${API_BASE}/verify/history`);
+    if (remote && Array.isArray(remote)) {
+      return remote;
+    }
+    return clientBlockchain.getVerificationHistory();
   },
 
   // Documents
   async issueCertificateAuto(formData: FormData): Promise<DocumentItem> {
-    const res = await fetch(`${API_BASE}/documents/issue-auto`, {
-      method: 'POST',
-      headers: getAuthHeader(),
-      body: formData,
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Failed to issue document');
+    try {
+      const res = await fetch(`${API_BASE}/documents/issue-auto`, {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: formData,
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && !contentType.includes('text/html')) {
+        return await res.json();
+      }
+    } catch {
+      // fallback
     }
-    return res.json();
+
+    // Client-side Official Certificate + QR + Proof Generator
+    return await clientBlockchain.issueCertificateAuto(formData);
   },
 
   async uploadCustomDocument(formData: FormData): Promise<DocumentItem> {
-    const res = await fetch(`${API_BASE}/documents/upload`, {
-      method: 'POST',
-      headers: getAuthHeader(),
-      body: formData,
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Failed to upload document');
+    try {
+      const res = await fetch(`${API_BASE}/documents/upload`, {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: formData,
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && !contentType.includes('text/html')) {
+        return await res.json();
+      }
+    } catch {
+      // fallback
     }
-    return res.json();
+
+    return await clientBlockchain.uploadCustomDocument(formData);
   },
 
   async getMyDocuments(): Promise<DocumentItem[]> {
-    const res = await fetch(`${API_BASE}/documents/my`, {
+    const remote = await safeFetchJson<DocumentItem[]>(`${API_BASE}/documents/my`, {
       headers: getAuthHeader(),
     });
-    if (!res.ok) throw new Error('Failed to fetch documents');
-    return res.json();
+    if (remote && Array.isArray(remote)) {
+      return remote;
+    }
+    return clientBlockchain.getDocuments();
   },
 
   async revokeDocument(documentId: string, reason: string): Promise<{ message: string; blockchain_transaction: string }> {
-    const res = await fetch(`${API_BASE}/documents/revoke`, {
+    const remote = await safeFetchJson<{ message: string; blockchain_transaction: string }>(`${API_BASE}/documents/revoke`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -173,43 +209,49 @@ export const api = {
       },
       body: JSON.stringify({ document_id: documentId, reason }),
     });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Failed to revoke document');
+
+    if (remote && remote.blockchain_transaction) {
+      return remote;
     }
-    return res.json();
+
+    return clientBlockchain.revokeDocument(documentId, reason);
   },
 
   // Admin & Analytics
   async getDashboardStats(): Promise<DashboardStats> {
-    const res = await fetch(`${API_BASE}/admin/stats`);
-    if (!res.ok) throw new Error('Failed to fetch stats');
-    return res.json();
+    const remote = await safeFetchJson<DashboardStats>(`${API_BASE}/admin/stats`);
+    if (remote && remote.total_documents !== undefined) {
+      return remote;
+    }
+    return clientBlockchain.getDashboardStats();
   },
 
   async getBlockchainTransactions(): Promise<BlockchainTransaction[]> {
-    const res = await fetch(`${API_BASE}/admin/transactions`);
-    if (!res.ok) throw new Error('Failed to fetch blockchain transactions');
-    return res.json();
+    const remote = await safeFetchJson<BlockchainTransaction[]>(`${API_BASE}/admin/transactions`);
+    if (remote && Array.isArray(remote)) {
+      return remote;
+    }
+    return clientBlockchain.getBlockchainTransactions();
   },
 
   async getUsers(): Promise<User[]> {
-    const res = await fetch(`${API_BASE}/admin/users`, {
+    const remote = await safeFetchJson<User[]>(`${API_BASE}/admin/users`, {
       headers: getAuthHeader(),
     });
-    if (!res.ok) throw new Error('Failed to fetch users');
-    return res.json();
+    if (remote && Array.isArray(remote)) {
+      return remote;
+    }
+    return clientBlockchain.getUsers();
   },
 
   async toggleUserStatus(userId: number, currentStatus: boolean): Promise<{ message: string }> {
-    const res = await fetch(`${API_BASE}/admin/users/${userId}/status?is_active=${!currentStatus}`, {
+    const remote = await safeFetchJson<{ message: string }>(`${API_BASE}/admin/users/${userId}/status?is_active=${!currentStatus}`, {
       method: 'POST',
       headers: getAuthHeader(),
     });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Failed to update user status');
+    if (remote && remote.message) {
+      return remote;
     }
-    return res.json();
+    return clientBlockchain.toggleUserStatus(userId, currentStatus);
   },
 };
