@@ -17,7 +17,7 @@ import {
   Info
 } from 'lucide-react';
 import { api } from '../services/api';
-import { VerificationResult } from '../types';
+import { VerificationResult, DocumentItem } from '../types';
 
 interface VerifyPageProps {
   initialDocId?: string;
@@ -45,6 +45,30 @@ export const VerifyPage: React.FC<VerifyPageProps> = ({ initialDocId }) => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [result, setResult] = useState<VerificationResult | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
+  const [isDownloadingReport, setIsDownloadingReport] = useState<boolean>(false);
+
+  const handleDownloadOfficialPdf = async (doc: DocumentItem) => {
+    try {
+      setIsDownloadingPdf(true);
+      await api.downloadOfficialPdf(doc);
+    } catch (err: any) {
+      alert('Error downloading official PDF: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
+  const handleDownloadVerificationReport = async (res: VerificationResult) => {
+    try {
+      setIsDownloadingReport(true);
+      await api.downloadVerificationReport(res);
+    } catch (err: any) {
+      alert('Error generating verification report: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsDownloadingReport(false);
+    }
+  };
 
   const handleVerifyById = async (idToVerify?: string) => {
     const id = idToVerify || documentId;
@@ -386,6 +410,30 @@ export const VerifyPage: React.FC<VerifyPageProps> = ({ initialDocId }) => {
                 <p style={{ color: 'var(--text-main)', fontSize: '0.95rem', lineHeight: 1.5 }}>
                   {result.message}
                 </p>
+
+                <div style={{ marginTop: '0.9rem', display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => handleDownloadVerificationReport(result)}
+                    disabled={isDownloadingReport}
+                    className="btn-primary"
+                    style={{ fontSize: '0.82rem', padding: '0.45rem 0.85rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: isDownloadingReport ? 'wait' : 'pointer' }}
+                    title="Download Official Cryptographic Verification Report PDF"
+                  >
+                    <ShieldCheck size={14} /> {isDownloadingReport ? 'Generating Report...' : 'Download Verification Audit Report (PDF)'}
+                  </button>
+
+                  {result.document && (
+                    <button
+                      onClick={() => handleDownloadOfficialPdf(result.document!)}
+                      disabled={isDownloadingPdf}
+                      className="btn-secondary"
+                      style={{ fontSize: '0.82rem', padding: '0.45rem 0.85rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: isDownloadingPdf ? 'wait' : 'pointer' }}
+                      title="Download Verified Certificate PDF"
+                    >
+                      <Download size={14} /> {isDownloadingPdf ? 'Generating PDF...' : 'Download Official Certificate PDF'}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -426,19 +474,29 @@ export const VerifyPage: React.FC<VerifyPageProps> = ({ initialDocId }) => {
           {/* Certificate Metadata Details */}
           {result.document && (
             <div className="glass-panel" style={{ padding: '1.75rem', marginBottom: '1.5rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.75rem' }}>
                 <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Credential Metadata</h3>
-                {result.document.file_name && (
-                  <a 
-                    href={api.getDocumentDownloadUrl(result.document.document_id)} 
-                    target="_blank" 
-                    rel="noreferrer"
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button 
+                    onClick={() => handleDownloadOfficialPdf(result.document!)}
+                    disabled={isDownloadingPdf}
                     className="btn-secondary"
-                    style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}
+                    style={{ fontSize: '0.82rem', padding: '0.42rem 0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: isDownloadingPdf ? 'wait' : 'pointer' }}
+                    title="Download Official Certificate PDF"
                   >
-                    <Download size={14} /> Download Official PDF
-                  </a>
-                )}
+                    <Download size={14} /> {isDownloadingPdf ? 'Generating PDF...' : 'Download Official PDF'}
+                  </button>
+
+                  <button 
+                    onClick={() => handleDownloadVerificationReport(result)}
+                    disabled={isDownloadingReport}
+                    className="btn-primary"
+                    style={{ fontSize: '0.82rem', padding: '0.42rem 0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: isDownloadingReport ? 'wait' : 'pointer', background: 'linear-gradient(135deg, #0284c7 0%, #2563eb 100%)' }}
+                    title="Download Official Cryptographic Verification Report PDF"
+                  >
+                    <ShieldCheck size={14} /> {isDownloadingReport ? 'Generating Report...' : 'Verification Report (PDF)'}
+                  </button>
+                </div>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>

@@ -52,6 +52,20 @@ async function safeFetchJson<T>(url: string, options?: RequestInit): Promise<T |
   return null;
 }
 
+export function downloadBlob(blob: Blob, filename: string): void {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.style.display = 'none';
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  }, 300);
+}
+
 export const api = {
   // Auth
   async login(email: string, password: string): Promise<{ access_token: string; user: User }> {
@@ -138,6 +152,42 @@ export const api = {
 
   getDocumentDownloadUrl(documentId: string): string {
     return clientBlockchain.getDocumentDownloadUrl(documentId);
+  },
+
+  async downloadDocumentBlob(documentId: string): Promise<Blob | null> {
+    try {
+      const res = await fetch(`${API_BASE}/documents/${encodeURIComponent(documentId)}/download`, {
+        headers: getAuthHeader(),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && !contentType.includes('text/html')) {
+        return await res.blob();
+      }
+    } catch {
+      // remote server offline or Netlify SPA
+    }
+    return null;
+  },
+
+  async downloadOfficialPdf(doc: DocumentItem): Promise<void> {
+    try {
+      const remoteBlob = await this.downloadDocumentBlob(doc.document_id);
+      if (remoteBlob && remoteBlob.size > 200) {
+        downloadBlob(remoteBlob, doc.file_name || `cert_${doc.document_id}.pdf`);
+        return;
+      }
+    } catch {
+      // fallback
+    }
+
+    const clientBlob = await clientBlockchain.generateOfficialPdfBlob(doc);
+    downloadBlob(clientBlob, doc.file_name || `cert_${doc.document_id}.pdf`);
+  },
+
+  async downloadVerificationReport(result: VerificationResult): Promise<void> {
+    const reportBlob = await clientBlockchain.generateVerificationReportBlob(result);
+    const docId = result.document?.document_id || 'AUDIT';
+    downloadBlob(reportBlob, `Verification_Report_${docId}.pdf`);
   },
 
   getQrCodeUrl(documentId: string): string {

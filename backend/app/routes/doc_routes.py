@@ -306,8 +306,24 @@ def get_document_details(document_id: str, db: Session = Depends(get_db)):
 def download_document(document_id: str, db: Session = Depends(get_db)):
     clean_id = document_id.strip().lower()
     doc = db.query(Document).filter(func.lower(Document.document_id) == clean_id).first()
-    if not doc or not doc.file_path or not os.path.exists(doc.file_path):
-        raise HTTPException(status_code=404, detail="Certificate file not found")
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Auto-regenerate certificate PDF if file is missing from server storage
+    if not doc.file_path or not os.path.exists(doc.file_path):
+        qr_path, _ = qr_service.generate_verification_qr(doc.document_id)
+        issued_date_str = doc.issued_at.strftime("%B %d, %Y") if doc.issued_at else "October 07, 2026"
+        new_pdf = generate_certificate_pdf(
+            recipient_name=doc.owner_name,
+            recipient_id=doc.recipient_id or "",
+            document_type=doc.document_type,
+            organization_name=doc.organization_name,
+            document_id=doc.document_id,
+            qr_image_path=qr_path,
+            issued_date_str=issued_date_str
+        )
+        doc.file_path = new_pdf
+        db.commit()
     
     # Determine correct content-type
     ext = os.path.splitext(doc.file_name)[1].lower() if doc.file_name else ""

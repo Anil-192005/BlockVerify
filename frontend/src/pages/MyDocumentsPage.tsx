@@ -25,6 +25,18 @@ export const MyDocumentsPage: React.FC = () => {
   const [revokeDoc, setRevokeDoc] = useState<DocumentItem | null>(null);
   const [revokeReason, setRevokeReason] = useState('Academic misconduct / Misprinted grade');
   const [isRevoking, setIsRevoking] = useState(false);
+  const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
+
+  const handleDownloadPdf = async (doc: DocumentItem) => {
+    try {
+      setDownloadingDocId(doc.document_id);
+      await api.downloadOfficialPdf(doc);
+    } catch (err: any) {
+      alert('Error downloading PDF: ' + (err.message || 'Unknown error'));
+    } finally {
+      setDownloadingDocId(null);
+    }
+  };
 
   const fetchDocs = async () => {
     setIsLoading(true);
@@ -142,16 +154,15 @@ export const MyDocumentsPage: React.FC = () => {
                         <QrCode size={14} /> QR
                       </button>
 
-                      <a
-                        href={api.getDocumentDownloadUrl(doc.document_id)}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        onClick={() => handleDownloadPdf(doc)}
+                        disabled={downloadingDocId === doc.document_id}
                         className="btn-secondary"
-                        style={{ padding: '0.35rem 0.6rem', fontSize: '0.78rem' }}
+                        style={{ padding: '0.35rem 0.6rem', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', cursor: downloadingDocId === doc.document_id ? 'wait' : 'pointer' }}
                         title="Download Certificate PDF"
                       >
-                        <Download size={14} /> PDF
-                      </a>
+                        <Download size={14} /> {downloadingDocId === doc.document_id ? '...' : 'PDF'}
+                      </button>
 
                       {doc.status === 'VALID' && (
                         <button

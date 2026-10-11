@@ -22,6 +22,19 @@ export const DocumentDetailsPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState<boolean>(false);
+
+  const handleDownload = async () => {
+    if (!doc) return;
+    try {
+      setIsDownloading(true);
+      await api.downloadOfficialPdf(doc);
+    } catch (err: any) {
+      alert('Error downloading PDF: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   useEffect(() => {
     if (id) {
@@ -93,14 +106,14 @@ export const DocumentDetailsPage: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <a
-              href={api.getDocumentDownloadUrl(doc.document_id)}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              onClick={handleDownload}
+              disabled={isDownloading}
               className="btn-primary"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: isDownloading ? 'wait' : 'pointer' }}
             >
-              <Download size={16} /> Download Official PDF
-            </a>
+              <Download size={16} /> {isDownloading ? 'Generating PDF...' : 'Download Official PDF'}
+            </button>
             <Link to={`/verify/${doc.document_id}`} className="btn-secondary">
               <FileCheck size={16} /> Public Verify View
             </Link>

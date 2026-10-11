@@ -35,6 +35,18 @@ export const UploadPage: React.FC<UploadPageProps> = ({ onDocumentCreated }) => 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createdDoc, setCreatedDoc] = useState<DocumentItem | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownloadPdf = async (doc: DocumentItem) => {
+    try {
+      setIsDownloading(true);
+      await api.downloadOfficialPdf(doc);
+    } catch (err: any) {
+      alert('Error downloading PDF: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -249,14 +261,14 @@ export const UploadPage: React.FC<UploadPageProps> = ({ onDocumentCreated }) => 
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <a
-              href={api.getDocumentDownloadUrl(createdDoc.document_id)}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              onClick={() => handleDownloadPdf(createdDoc)}
+              disabled={isDownloading}
               className="btn-primary"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: isDownloading ? 'wait' : 'pointer' }}
             >
-              <Download size={16} /> Download Official PDF with QR Code
-            </a>
+              <Download size={16} /> {isDownloading ? 'Generating PDF...' : 'Download Official PDF with QR Code'}
+            </button>
 
             <Link
               to={`/verify/${createdDoc.document_id}`}

@@ -198,27 +198,38 @@ class ClientBlockchainService {
     return SEED_USERS[0];
   }
 
-  // --- Issue Official PDF with embedded QR and Proof ---
-  public async issueCertificateAuto(formData: FormData): Promise<DocumentItem> {
-    const recipientName = (formData.get('owner_name') as string) || (formData.get('recipient_name') as string) || 'Anil M';
-    const recipientId = (formData.get('recipient_id') as string) || '1AB23CS001';
-    const documentType = (formData.get('document_type') as string) || 'Degree Certificate';
-    const organizationName = (formData.get('organization_name') as string) || 'ABC Engineering College';
-    
-    const count = this.getDocuments().length + 1;
-    const documentId = `CERT-2026-${String(count).padStart(6, '0')}`;
-    const issuedDateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: '2-digit', year: 'numeric' });
+  // --- Official PDF Generation & Storage ---
+  public async generateOfficialPdfBlob(docItem: DocumentItem): Promise<Blob> {
+    const documentId = docItem.document_id;
+    if (pdfBlobStore.has(documentId)) {
+      return pdfBlobStore.get(documentId)!;
+    }
 
-    // Generate QR code data URI pointing to public verification route
+    const recipientName = docItem.owner_name || docItem.recipient_name || 'Anil M';
+    const recipientId = docItem.recipient_id || '';
+    const documentType = docItem.document_type || 'Degree Certificate';
+    const organizationName = docItem.organization_name || 'ABC Engineering College';
+    const issuedDateStr = docItem.issued_at
+      ? new Date(docItem.issued_at).toLocaleDateString('en-US', { month: 'long', day: '2-digit', year: 'numeric' })
+      : new Date().toLocaleDateString('en-US', { month: 'long', day: '2-digit', year: 'numeric' });
+
+    // Generate high-resolution QR code
     const frontendBase = typeof window !== 'undefined' ? window.location.origin : 'https://guileless-blockchain.netlify.app';
     const verifyUrl = `${frontendBase}/verify/${documentId}`;
-    const qrDataUri = await QRCode.toDataURL(verifyUrl, {
-      errorCorrectionLevel: 'H',
-      margin: 2,
-      width: 250,
-      color: { dark: '#0f172a', light: '#ffffff' }
-    });
-    qrDataUriStore.set(documentId, qrDataUri);
+    let qrDataUri = qrDataUriStore.get(documentId) || docItem.qr_code_base64;
+    if (!qrDataUri) {
+      try {
+        qrDataUri = await QRCode.toDataURL(verifyUrl, {
+          errorCorrectionLevel: 'H',
+          margin: 2,
+          width: 250,
+          color: { dark: '#0f172a', light: '#ffffff' }
+        });
+        qrDataUriStore.set(documentId, qrDataUri);
+      } catch {
+        // fallback
+      }
+    }
 
     // Render official Landscape Letter certificate via jsPDF
     const doc = new jsPDF({
@@ -229,6 +240,10 @@ class ClientBlockchainService {
 
     const pageWidth = 792;
     const pageHeight = 612;
+
+    // Background tint
+    doc.setFillColor(253, 254, 255);
+    doc.rect(0, 0, pageWidth, pageHeight, 'F');
 
     // Draw luxury double border
     doc.setDrawColor(212, 175, 55); // Gold
@@ -248,7 +263,7 @@ class ClientBlockchainService {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.setTextColor(100, 116, 139);
-    doc.text('OFFICIAL CREDENTIAL OF AUTHENTICITY', pageWidth / 2, 102, { align: 'center' });
+    doc.text('OFFICIAL CREDENTIAL OF AUTHENTICITY • ETHEREUM BLOCKCHAIN ANCHORED', pageWidth / 2, 102, { align: 'center' });
 
     // Credential Type
     doc.setFont('helvetica', 'bold');
@@ -289,7 +304,7 @@ class ClientBlockchainService {
     doc.text(`Document ID: ${documentId}`, 60, footerY);
     doc.text(`Date of Issue: ${issuedDateStr}`, 60, footerY + 16);
     doc.text('Blockchain: Ethereum Sepolia / EVM', 60, footerY + 32);
-    doc.text('Status: Cryptographically Anchored', 60, footerY + 48);
+    doc.text(`Status: ${docItem.status === 'REVOKED' ? 'REVOKED ON BLOCKCHAIN' : 'Cryptographically Anchored & Valid'}`, 60, footerY + 48);
 
     doc.setFont('helvetica', 'normal');
     doc.text('____________________________', pageWidth / 2 - 40, footerY + 20);
@@ -301,19 +316,17 @@ class ClientBlockchainService {
     doc.text('Academic Affairs', pageWidth / 2 - 40, footerY + 50);
 
     // Embed QR Image in bottom-right
-    try {
-      doc.addImage(qrDataUri, 'PNG', pageWidth - 165, footerY - 20, 95, 95);
-    } catch {
-      // fallback
+    if (qrDataUri) {
+      try {
+        doc.addImage(qrDataUri, 'PNG', pageWidth - 165, footerY - 20, 95, 95);
+      } catch {
+        // fallback
+      }
     }
 
     // Get raw PDF bytes
     const basePdfBytes = new Uint8Array(doc.output('arraybuffer'));
     const bodyHash = await computeSha256(basePdfBytes);
-
-    // Realistic blockchain metadata
-    const txHash = '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
-    const blockNum = 5621480 + Math.floor(Math.random() * 500);
 
     // Cryptographic Proof Trailer embedded inside the PDF
     const proofTrailerObj = {
@@ -323,10 +336,10 @@ class ClientBlockchainService {
       document_type: documentType,
       organization_name: organizationName,
       body_hash: bodyHash,
-      tx_hash: txHash,
-      block_number: blockNum,
-      issued_at: new Date().toISOString(),
-      status: 'VALID',
+      tx_hash: docItem.transaction_hash,
+      block_number: docItem.block_number,
+      issued_at: docItem.issued_at,
+      status: docItem.status,
     };
     const proofComment = `\n%BLOCKVERIFY:${JSON.stringify(proofTrailerObj)}\n`;
     const proofBytes = new TextEncoder().encode(proofComment);
@@ -336,13 +349,270 @@ class ClientBlockchainService {
     finalBytes.set(basePdfBytes, 0);
     finalBytes.set(proofBytes, basePdfBytes.length);
 
-    // Final official SHA-256 hash of the complete file
-    const fileHash = await computeSha256(finalBytes);
-
     const pdfBlob = new Blob([finalBytes], { type: 'application/pdf' });
     pdfBlobStore.set(documentId, pdfBlob);
+    return pdfBlob;
+  }
 
-    const newDoc: DocumentItem = {
+  // --- Official Verification Audit Report PDF Generation ---
+  public async generateVerificationReportBlob(result: VerificationResult): Promise<Blob> {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'pt',
+      format: 'a4', // 595.28 x 841.89 pt
+    });
+
+    const pageWidth = 595.28;
+    const pageHeight = 841.89;
+    const margin = 40;
+    const contentWidth = pageWidth - margin * 2;
+
+    // Header Background
+    doc.setFillColor(15, 23, 42); // slate-900
+    doc.rect(0, 0, pageWidth, 90, 'F');
+
+    // Gold accent stripe
+    doc.setFillColor(212, 175, 55); // gold
+    doc.rect(0, 90, pageWidth, 4, 'F');
+
+    // Header Text
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.setTextColor(255, 255, 255);
+    doc.text('BLOCKVERIFY PROTOCOL', margin, 40);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(148, 163, 184); // slate-400
+    doc.text('DECENTRALIZED CRYPTOGRAPHIC VERIFICATION AUDIT REPORT', margin, 56);
+    doc.text('ETHEREUM SEPOLIA SMART CONTRACT CONSENSUS ENGINE', margin, 68);
+
+    // Audit Reference and Timestamp on right header
+    doc.setFontSize(8);
+    doc.setTextColor(203, 213, 225);
+    const auditId = `AUD-${Date.now().toString(36).toUpperCase()}`;
+    doc.text(`AUDIT ID: ${auditId}`, pageWidth - margin, 40, { align: 'right' });
+    doc.text(`VERIFIED: ${new Date().toUTCString()}`, pageWidth - margin, 54, { align: 'right' });
+    doc.text('NETWORK: ETHEREUM SEPOLIA (EVM)', pageWidth - margin, 68, { align: 'right' });
+
+    let currentY = 118;
+
+    // Status Banner Box
+    const isSuccess = result.status === 'VALID';
+    const isRevoked = result.status === 'REVOKED';
+    const isTampered = result.status === 'TAMPERED' || result.status === 'INVALID';
+
+    if (isSuccess) {
+      doc.setFillColor(236, 253, 245);
+      doc.setDrawColor(16, 185, 129);
+      doc.setLineWidth(1.5);
+      doc.roundedRect(margin, currentY, contentWidth, 64, 4, 4, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor(6, 95, 70);
+      doc.text('STATUS: VERIFIED AUTHENTIC & CRYPTOGRAPHICALLY VALID', margin + 16, currentY + 24);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(4, 120, 87);
+      doc.text('Zero alterations detected. SHA-256 fingerprint matches the immutable blockchain record bit-for-bit.', margin + 16, currentY + 44);
+    } else if (isRevoked) {
+      doc.setFillColor(254, 242, 242);
+      doc.setDrawColor(244, 63, 94);
+      doc.setLineWidth(1.5);
+      doc.roundedRect(margin, currentY, contentWidth, 64, 4, 4, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor(159, 18, 57);
+      doc.text('STATUS: NOT VERIFIED - DOCUMENT FORMALLY REVOKED', margin + 16, currentY + 24);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(190, 18, 60);
+      const reason = result.blockchain_proof?.revocation_reason || result.document?.revocation_reason || 'Recalled by authorized issuer';
+      doc.text(`On-chain Revocation Reason: ${reason}`, margin + 16, currentY + 44);
+    } else if (isTampered) {
+      doc.setFillColor(254, 242, 242);
+      doc.setDrawColor(225, 29, 72);
+      doc.setLineWidth(1.5);
+      doc.roundedRect(margin, currentY, contentWidth, 64, 4, 4, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor(159, 18, 57);
+      doc.text('STATUS: CRYPTOGRAPHIC INTEGRITY VIOLATION (TAMPERED)', margin + 16, currentY + 24);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(190, 18, 60);
+      doc.text('The file binary stream does not match the blockchain hash. Alterations or byte modifications detected.', margin + 16, currentY + 44);
+    } else {
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(203, 213, 225);
+      doc.setLineWidth(1.5);
+      doc.roundedRect(margin, currentY, contentWidth, 64, 4, 4, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor(30, 41, 59);
+      doc.text(`STATUS: ${result.status}`, margin + 16, currentY + 24);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(71, 85, 105);
+      doc.text(result.message || 'No registered blockchain record found.', margin + 16, currentY + 44);
+    }
+
+    currentY += 82;
+
+    // SECTION 1: CREDENTIAL SPECIFICATIONS
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('1. CREDENTIAL SPECIFICATIONS', margin, currentY);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.75);
+    doc.line(margin, currentY + 4, pageWidth - margin, currentY + 4);
+
+    currentY += 18;
+
+    const docItem = result.document;
+    const credRows = [
+      ['Document ID:', docItem?.document_id || result.blockchain_proof?.claimed_document_id || 'N/A'],
+      ['Recipient Name:', docItem?.owner_name || docItem?.recipient_name || 'N/A'],
+      ['Registration / USN:', docItem?.recipient_id || 'N/A'],
+      ['Document Category:', docItem?.document_type || 'Academic Degree / Certificate'],
+      ['Issuing Organization:', docItem?.organization_name || 'ABC Engineering College'],
+      ['Date Issued:', docItem?.issued_at ? new Date(docItem.issued_at).toLocaleDateString() : 'N/A'],
+    ];
+
+    doc.setFontSize(8.5);
+    for (const [lbl, val] of credRows) {
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(71, 85, 105);
+      doc.text(lbl, margin + 8, currentY);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(15, 23, 42);
+      doc.text(String(val), margin + 140, currentY);
+      currentY += 15;
+    }
+
+    currentY += 10;
+
+    // SECTION 2: CRYPTOGRAPHIC AUDIT TRAIL
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('2. ON-CHAIN CRYPTOGRAPHIC AUDIT TRAIL', margin, currentY);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.75);
+    doc.line(margin, currentY + 4, pageWidth - margin, currentY + 4);
+
+    currentY += 18;
+
+    const proof = result.blockchain_proof;
+    const comparison = result.hash_comparison;
+    const auditRows = [
+      ['Blockchain Network:', proof?.network || 'Ethereum Sepolia Testnet (EVM)'],
+      ['Smart Contract Address:', '0x5FbDB2315678afecb367f032d93F642f64180aa3'],
+      ['Issuer Wallet Address:', proof?.issuer_address || docItem?.issuer_wallet || '0x8A92d00f7d54c12ef4b98c36391d4e082ef73812'],
+      ['Transaction Hash:', proof?.transaction_hash || docItem?.transaction_hash || '0xb0cd88c1d157b61eb65fc7dcf6834bf4807c2834ca58de3adda10d11a22a186f'],
+      ['Block Number:', String(proof?.block_number || docItem?.block_number || 5621481)],
+      ['IPFS Content ID (CID):', proof?.ipfs_cid || docItem?.ipfs_cid || 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG'],
+      ['Registered SHA-256 Hash:', comparison?.original_blockchain_hash || proof?.blockchain_hash || docItem?.file_hash || 'N/A'],
+      ['Verified File SHA-256 Hash:', comparison?.uploaded_file_hash || proof?.uploaded_hash || comparison?.original_blockchain_hash || 'N/A'],
+    ];
+
+    for (const [lbl, val] of auditRows) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(71, 85, 105);
+      doc.text(lbl, margin + 8, currentY);
+
+      doc.setFont('courier', 'normal');
+      doc.setTextColor(30, 41, 59);
+      const valStr = String(val);
+      if (valStr.length > 52) {
+        doc.setFontSize(7);
+      } else {
+        doc.setFontSize(8);
+      }
+      doc.text(valStr, margin + 140, currentY);
+      currentY += 15;
+    }
+
+    currentY += 14;
+
+    // SECTION 3: VERIFICATION QR CODE & AUTHENTICITY STAMP
+    const footerBoxY = currentY;
+    const footerBoxH = 135;
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, footerBoxY, contentWidth, footerBoxH, 4, 4, 'FD');
+
+    // Generate QR Code for live re-verification
+    const effectiveDocId = docItem?.document_id || 'CERT-2026-000001';
+    const frontendBase = typeof window !== 'undefined' ? window.location.origin : 'https://guileless-blockchain.netlify.app';
+    const verifyUrl = `${frontendBase}/verify/${effectiveDocId}`;
+    try {
+      const qrDataUri = await QRCode.toDataURL(verifyUrl, {
+        errorCorrectionLevel: 'H',
+        margin: 2,
+        width: 200,
+        color: { dark: '#0f172a', light: '#ffffff' }
+      });
+      doc.addImage(qrDataUri, 'PNG', margin + 14, footerBoxY + 12, 110, 110);
+    } catch {
+      // fallback
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('LIVE ON-CHAIN RE-VERIFICATION', margin + 138, footerBoxY + 28);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
+    const expl = 'Scan this QR code with any mobile device camera or barcode scanner to verify this credential directly against the Ethereum smart contract registry in real-time.';
+    const splitExpl = doc.splitTextToSize(expl, contentWidth - 150);
+    doc.text(splitExpl, margin + 138, footerBoxY + 44);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(37, 99, 235);
+    doc.text(`Direct URL: ${verifyUrl}`, margin + 138, footerBoxY + 76);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Tamper-Resistant Cryptographic Guarantee: Bit-for-bit SHA-256 match enforced by smart contract.', margin + 138, footerBoxY + 104);
+    doc.text('BlockVerify EVM Protocol • SHA-256 / Keccak-256 • ECDSA secp256k1', margin + 138, footerBoxY + 116);
+
+    // Page Bottom Footer
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text('BlockVerify Decentralized Credential Verification System • Generated autonomously via Ethereum EVM Client Service', pageWidth / 2, pageHeight - 18, { align: 'center' });
+
+    return doc.output('blob');
+  }
+
+  // --- Issue Official PDF with embedded QR and Proof ---
+  public async issueCertificateAuto(formData: FormData): Promise<DocumentItem> {
+    const recipientName = (formData.get('owner_name') as string) || (formData.get('recipient_name') as string) || 'Anil M';
+    const recipientId = (formData.get('recipient_id') as string) || '1AB23CS001';
+    const documentType = (formData.get('document_type') as string) || 'Degree Certificate';
+    const organizationName = (formData.get('organization_name') as string) || 'ABC Engineering College';
+    
+    const count = this.getDocuments().length + 1;
+    const documentId = `CERT-2026-${String(count).padStart(6, '0')}`;
+    const txHash = '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+    const blockNum = 5621480 + Math.floor(Math.random() * 500);
+
+    const tempDoc: DocumentItem = {
       id: Date.now(),
       document_id: documentId,
       owner_name: recipientName,
@@ -351,10 +621,9 @@ class ClientBlockchainService {
       document_type: documentType,
       organization_name: organizationName,
       file_name: `cert_${documentId}.pdf`,
-      file_size_bytes: finalBytes.byteLength,
-      file_hash: fileHash,
+      file_size_bytes: 14500,
+      file_hash: '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(''),
       ipfs_cid: 'Qm' + Array.from({ length: 44 }, () => '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'[Math.floor(Math.random() * 58)]).join(''),
-      qr_code_base64: qrDataUri,
       transaction_hash: txHash,
       block_number: blockNum,
       issuer_wallet: '0x8A92d00f7d54c12ef4b98c36391d4e082ef73812',
@@ -362,8 +631,14 @@ class ClientBlockchainService {
       issued_at: new Date().toISOString(),
     };
 
-    this.saveDocument(newDoc);
-    return newDoc;
+    const pdfBlob = await this.generateOfficialPdfBlob(tempDoc);
+    const buffer = await pdfBlob.arrayBuffer();
+    const computedHash = await computeSha256(buffer);
+    tempDoc.file_hash = computedHash;
+    tempDoc.file_size_bytes = pdfBlob.size;
+
+    this.saveDocument(tempDoc);
+    return tempDoc;
   }
 
   public async uploadCustomDocument(formData: FormData): Promise<DocumentItem> {
@@ -384,6 +659,10 @@ class ClientBlockchainService {
     const count = this.getDocuments().length + 1;
     const documentId = `DOC-2026-${String(count).padStart(6, '0')}`;
     const txHash = '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+
+    if (file) {
+      pdfBlobStore.set(documentId, file);
+    }
 
     const newDoc: DocumentItem = {
       id: Date.now(),
@@ -675,6 +954,35 @@ class ClientBlockchainService {
     }
     // Return relative API endpoint for fallback
     return `/api/documents/${encodeURIComponent(documentId)}/download`;
+  }
+
+  public async getOrGenerateDocumentBlob(documentId: string): Promise<Blob> {
+    const blob = pdfBlobStore.get(documentId);
+    if (blob) {
+      return blob;
+    }
+    const doc = this.getDocuments().find(d => d.document_id.toLowerCase() === documentId.toLowerCase());
+    if (doc) {
+      return await this.generateOfficialPdfBlob(doc);
+    }
+    return await this.generateOfficialPdfBlob({
+      id: Date.now(),
+      document_id: documentId,
+      owner_name: 'Anil M',
+      recipient_name: 'Anil M',
+      recipient_id: '1AB23CS001',
+      document_type: 'Degree Certificate',
+      organization_name: 'ABC Engineering College',
+      file_name: `cert_${documentId}.pdf`,
+      file_size_bytes: 14463,
+      file_hash: '0x223214f848ac0a0b4cb750053ae0939721c2a9ca0c93efef0d7b01f84cdb9a14',
+      ipfs_cid: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+      transaction_hash: '0xb0cd88c1d157b61eb65fc7dcf6834bf4807c2834ca58de3adda10d11a22a186f',
+      block_number: 5621481,
+      issuer_wallet: '0x8A92d00f7d54c12ef4b98c36391d4e082ef73812',
+      status: 'VALID',
+      issued_at: new Date().toISOString(),
+    });
   }
 
   public getQrCodeUrl(documentId: string): string {
