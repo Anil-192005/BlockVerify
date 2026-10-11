@@ -41,6 +41,22 @@ def get_next_doc_id(db: Session, prefix: str = "CERT") -> str:
     count = db.query(Document).count() + 1
     return f"{prefix}-{year}-{count:06d}"
 
+def resolve_frontend_base_url(request: Request) -> str:
+    origin = request.headers.get("origin")
+    if origin and "http" in origin:
+        return origin.rstrip("/")
+    referer = request.headers.get("referer")
+    if referer and "http" in referer:
+        from urllib.parse import urlparse
+        p = urlparse(referer)
+        return f"{p.scheme}://{p.netloc}"
+    host = request.headers.get("host")
+    if host and not host.startswith("localhost") and not host.startswith("127.0.0.1"):
+        host_name = host.split(":")[0]
+        scheme = "https" if request.url.scheme == "https" else "http"
+        return f"{scheme}://{host_name}:5173"
+    return settings.FRONTEND_URL.rstrip("/")
+
 @router.post("/issue-auto", response_model=DocumentResponse)
 def issue_certificate_auto(
     request: Request,
@@ -63,7 +79,8 @@ def issue_certificate_auto(
         raise HTTPException(status_code=400, detail="Document ID already registered")
 
     # 1. Generate QR Code
-    qr_path, qr_base64 = qr_service.generate_verification_qr(doc_id)
+    frontend_base = resolve_frontend_base_url(request)
+    qr_path, qr_base64 = qr_service.generate_verification_qr(doc_id, base_frontend_url=frontend_base)
 
     # 2. Render Official PDF Certificate with embedded QR code
     pdf_path = generate_certificate_pdf(
@@ -200,7 +217,8 @@ async def upload_custom_document(
     _, ipfs_cid = ipfs_service.upload_bytes(file_bytes, file.filename or "document.pdf")
 
     # QR Code
-    qr_path, qr_base64 = qr_service.generate_verification_qr(doc_id)
+    frontend_base = resolve_frontend_base_url(request)
+    qr_path, qr_base64 = qr_service.generate_verification_qr(doc_id, base_frontend_url=frontend_base)
 
     # Anchor to Ethereum Sepolia
     wallet = current_user.wallet_address or "0x8A92d00f7d54c12ef4b98c36391d4e082ef73812"

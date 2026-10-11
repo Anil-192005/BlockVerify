@@ -9,12 +9,13 @@ class QRService:
     def __init__(self):
         self.qr_dir = settings.QR_DIR
 
-    def generate_verification_qr(self, document_id: str) -> tuple[str, str]:
+    def generate_verification_qr(self, document_id: str, base_frontend_url: str = None) -> tuple[str, str]:
         """
         Generates QR code embedding public verification URL.
         Returns: (file_path, base64_data_uri)
         """
-        verify_url = f"{settings.FRONTEND_URL}/verify/{document_id}"
+        frontend_base = (base_frontend_url or settings.FRONTEND_URL).rstrip('/')
+        verify_url = f"{frontend_base}/verify/{document_id}"
         
         qr = qrcode.QRCode(
             version=1,

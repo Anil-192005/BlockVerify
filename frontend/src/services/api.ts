@@ -8,8 +8,21 @@ import {
 } from '../types';
 
 const isTunnel = typeof window !== 'undefined' && window.location.hostname.includes('loca.lt');
-const API_BASE = import.meta.env.VITE_API_BASE_URL ||
-  (isTunnel ? 'https://good-emus-laugh.loca.lt/api' : 'http://localhost:8000/api');
+
+const getApiBase = (): string => {
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  if (typeof window !== 'undefined') {
+    // When accessed from any device (localhost, LAN IP like 192.168.x.x, or tunnel),
+    // relative '/api' routes through Vite's dev proxy (or reverse proxy in production).
+    // This eliminates localhost connection issues and ensures other devices communicate seamlessly!
+    return '/api';
+  }
+  return 'http://localhost:8000/api';
+};
+
+const API_BASE = getApiBase();
 
 function getBaseHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};

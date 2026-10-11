@@ -112,7 +112,7 @@ async def verify_uploaded_file(
             target_chain_rec.get("document_hash") if target_chain_rec and target_chain_rec.get("exists") else None
         )
 
-        if target_hash and target_hash.lower() != uploaded_hash.lower():
+        if target_hash and normalize_hash(target_hash) != normalize_hash(uploaded_hash):
             # TAMPERING DETECTED -> INVALID
             log_verification(
                 db,
@@ -146,8 +146,13 @@ async def verify_uploaded_file(
                 }
             )
 
-    # 3. Direct hash lookup in database
-    db_doc = db.query(Document).filter(func.lower(Document.file_hash) == uploaded_hash.lower()).first()
+    # 3. Direct hash lookup in database (supporting both 0x-prefixed and raw hex)
+    clean_raw = uploaded_hash[2:] if uploaded_hash.startswith("0x") else uploaded_hash
+    clean_with_prefix = "0x" + clean_raw
+    db_doc = db.query(Document).filter(
+        (func.lower(Document.file_hash) == clean_with_prefix.lower()) |
+        (func.lower(Document.file_hash) == clean_raw.lower())
+    ).first()
 
     if chain_result.get("exists") or db_doc:
         doc_obj = db_doc
